@@ -10,7 +10,6 @@ import {
   SwatchCount,
   generatePalettesBatch,
   doesPaletteBelongToFamily,
-  paletteVisualDistance,
 } from '@/lib/color-engine';
 import PaletteCard from './PaletteCard';
 import FilterBar from './FilterBar';
@@ -241,50 +240,54 @@ export default function ExploreFeed({
 
   // Generate next batch using current active filters with anti-oscillation protection
   const loadNextBatch = useCallback(() => {
-    const now = Date.now();
-    if (isFetchingRef.current || now - lastFetchTimestamp.current < 450) {
+    if (isFetchingRef.current) {
       return;
     }
 
     isFetchingRef.current = true;
-    lastFetchTimestamp.current = now;
+    lastFetchTimestamp.current = Date.now();
     setIsLoadingMore(true);
 
-    requestAnimationFrame(() => {
-      let effectiveFamily = selectedColorFamily;
-      if (effectiveFamily === 'all' && searchQuery.trim()) {
-        const searchFam = parseSearchToFamily(searchQuery);
-        if (searchFam) effectiveFamily = searchFam;
-      }
+    // Use a short timeout to let React update the loading state before synchronous heavy generation
+    setTimeout(() => {
+      try {
+        let effectiveFamily = selectedColorFamily;
+        if (effectiveFamily === 'all' && searchQuery.trim()) {
+          const searchFam = parseSearchToFamily(searchQuery);
+          if (searchFam) effectiveFamily = searchFam;
+        }
 
-      seedCounterRef.current += BATCH_SIZE * 5 + Math.floor(Math.random() * 25000) + 1234;
-      const countForGen: SwatchCount = selectedCount === 0 ? ((Math.floor(Math.random() * 4) + 3) as SwatchCount) : selectedCount;
-      const nextBatch = generatePalettesBatch(
-        BATCH_SIZE,
-        selectedHarmony,
-        seedCounterRef.current,
-        countForGen,
-        effectiveFamily
-      );
+        seedCounterRef.current += BATCH_SIZE * 5 + Math.floor(Math.random() * 25000) + 1234;
+        const countForGen: SwatchCount = selectedCount === 0 ? ((Math.floor(Math.random() * 4) + 3) as SwatchCount) : selectedCount;
+        const nextBatch = generatePalettesBatch(
+          BATCH_SIZE,
+          selectedHarmony,
+          seedCounterRef.current,
+          countForGen,
+          effectiveFamily
+        );
 
-      setPalettes((prev) => {
-        const seenSignatures = new Set(prev.map((p) => p.colors.map((c) => c.hex).join('-')));
-        const seenIds = new Set(prev.map((p) => p.id));
-        const unique = nextBatch.filter((p) => {
-          const sig = p.colors.map((c) => c.hex).join('-');
-          if (seenSignatures.has(sig) || seenIds.has(p.id)) return false;
-          const isTooSimilar = prev.some((existing) => paletteVisualDistance(existing, p) < 22);
-          if (isTooSimilar) return false;
-          seenSignatures.add(sig);
-          seenIds.add(p.id);
-          return true;
+        setPalettes((prev) => {
+          const seenSignatures = new Set(prev.map((p) => p.colors.map((c) => c.hex).join('-')));
+          const seenIds = new Set(prev.map((p) => p.id));
+          const unique = nextBatch.filter((p) => {
+            const sig = p.colors.map((c) => c.hex).join('-');
+            if (seenSignatures.has(sig) || seenIds.has(p.id)) return false;
+            seenSignatures.add(sig);
+            seenIds.add(p.id);
+            return true;
+          });
+
+          // Even if some items are visually close, ensure we always append at least the unique items
+          return unique.length > 0 ? [...prev, ...unique] : [...prev, ...nextBatch];
         });
-        return [...prev, ...unique];
-      });
-
-      isFetchingRef.current = false;
-      setIsLoadingMore(false);
-    });
+      } catch (err) {
+        console.error('Failed generating more palettes:', err);
+      } finally {
+        isFetchingRef.current = false;
+        setIsLoadingMore(false);
+      }
+    }, 50);
   }, [selectedHarmony, selectedCount, selectedColorFamily, searchQuery]);
 
   // Handle harmony filter change
@@ -453,7 +456,7 @@ export default function ExploreFeed({
     });
   }, [palettes, selectedCount, selectedColorFamily, searchQuery]);
 
-  // Intersection Observer for Infinite Scroll with anti-jitter protection
+  // Intersection Observer + Window Scroll Fallback for robust Infinite Scroll across all browsers/frames
   useEffect(() => {
     const target = observerTarget.current;
     if (!target) return;
@@ -471,14 +474,28 @@ export default function ExploreFeed({
       },
       {
         root: null,
-        rootMargin: '400px',
-        threshold: 0.05,
+        rootMargin: '600px',
+        threshold: 0,
       }
     );
 
     observer.observe(target);
+
+    // Secondary window scroll listener fallback (handles browsers/iframes where IntersectionObserver may miss rapid scrolling)
+    const handleWindowScroll = () => {
+      if (isFetchingRef.current || filteredPalettes.length === 0) return;
+      const scrollPosition = window.innerHeight + window.scrollY;
+      const threshold = document.documentElement.offsetHeight - 800;
+      if (scrollPosition >= threshold) {
+        loadNextBatch();
+      }
+    };
+
+    window.addEventListener('scroll', handleWindowScroll, { passive: true });
+
     return () => {
       observer.disconnect();
+      window.removeEventListener('scroll', handleWindowScroll);
     };
   }, [loadNextBatch, filteredPalettes.length]);
 
@@ -541,13 +558,23 @@ export default function ExploreFeed({
       <div
         ref={observerTarget}
         id="infinite-scroll-trigger"
-        className="w-full py-10 flex flex-col items-center justify-center gap-2"
+        className="w-full py-8 sm:py-10 flex flex-col items-center justify-center gap-3"
       >
-        {isLoadingMore && (
-          <div className="flex items-center gap-2.5 px-4 py-2 rounded-full bg-white dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 shadow-xs text-xs text-neutral-600 dark:text-neutral-300 font-medium">
+        {isLoadingMore ? (
+          <div className="flex items-center gap-2.5 px-5 py-2.5 rounded-full bg-white dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 shadow-sm text-xs text-neutral-600 dark:text-neutral-300 font-medium">
             <Loader2 className="w-4 h-4 animate-spin text-amber-500" />
-            <span>Generating fresh palettes...</span>
+            <span>Generating fresh harmonious palettes...</span>
           </div>
+        ) : (
+          filteredPalettes.length > 0 && (
+            <button
+              onClick={loadNextBatch}
+              className="inline-flex items-center gap-2 px-5 py-2 rounded-full border border-slate-300 dark:border-slate-700 bg-white/80 dark:bg-slate-900/80 hover:bg-slate-100 dark:hover:bg-slate-800 text-xs font-semibold text-slate-700 dark:text-slate-200 shadow-2xs transition-all cursor-pointer"
+            >
+              <Sparkles className="w-3.5 h-3.5 text-amber-500" />
+              <span>Load More Palettes</span>
+            </button>
+          )
         )}
       </div>
 
