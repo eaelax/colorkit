@@ -1,0 +1,6 @@
+{
+  "name": "ColorKit - Free Color Palette Generator & Color Schemes",
+  "description": "Infinite color palette generator, color schemes, and design tokens for web design, UI/UX, and Tailwind CSS. Instant hex copy, WCAG contrast, and CSS export.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

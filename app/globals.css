@@ -1,0 +1,12 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@variant dark (&:where(.dark, .dark *));
+
+/* Hide Next.js development indicator at bottom corner */
+nextjs-portal,
+[data-nextjs-toast],
+#__next-build-watcher,
+#nextjs-dev-indicator {
+  display: none !important;
+}
